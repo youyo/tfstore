@@ -29,6 +29,8 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
+		fmt.Println("Creating stack...")
+
 		if err := tf.WaitCreation(ctx, stackName); err != nil {
 			return err
 		}
