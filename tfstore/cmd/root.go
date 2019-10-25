@@ -39,7 +39,16 @@ var rootCmd = &cobra.Command{
 
 		exampleCommand := tf.GenerateCommandExample(ctx)
 
-		fmt.Println(exampleCommand)
+		fmt.Println("")
+		fmt.Println("bucket: " + tf.BucketName)
+		fmt.Println("dynamodb_table: " + tf.DynamodbTableName)
+		fmt.Println("region: " + tf.Region)
+		fmt.Println("key: terraform.tfstate")
+		fmt.Println("encrypt: true")
+		fmt.Println("")
+		fmt.Println("Terraform initialize command is")
+		fmt.Println("")
+		fmt.Println("$ " + exampleCommand)
 
 		return nil
 	},
@@ -55,7 +64,7 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	rootCmd.Flags().StringP("stack-name", "n", "", "The name that is associated with the stack.")
+	rootCmd.Flags().StringP("stack-name", "n", "tfstore", "The name that is associated with the stack.")
 	viper.BindPFlags(rootCmd.Flags())
 }
 
