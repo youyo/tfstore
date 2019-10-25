@@ -1,0 +1,8 @@
+#compdef tfstore
+
+_tfstore() {
+	_arguments -w \
+		'(- *)'{-h,--help}'[help for tfstore]' \
+		'(-n --stack-name)'{-n,--stack-name}'[The name that is associated with the stack.]' \
+		'--version[version for tfstore]'
+}
