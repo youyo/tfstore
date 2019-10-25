@@ -24,5 +24,5 @@ package main
 import "github.com/youyo/tfstore/tfstore/cmd"
 
 func main() {
-  cmd.Execute()
+	cmd.Execute()
 }
