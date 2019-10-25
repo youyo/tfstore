@@ -9,7 +9,7 @@ https://www.terraform.io/docs/backends/types/s3.html
 
 ```
 $ brew tap youyo/tap
-$ brew install awslogin
+$ brew install tfstore
 ```
 
 Other platforms are download from [github release page](https://github.com/youyo/tfstore/releases).
