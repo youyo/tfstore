@@ -1,34 +1,57 @@
+version: 2
+
 before:
   hooks:
     - go mod download
 
 builds:
-  - main: ./tfstore/main.go
+  - id: darwin
+    main: ./main.go
     env:
       - CGO_ENABLED=0
     ldflags:
-      -X github.com/youyo/tfstore/tfstore/cmd.Version={{ .Version }}
+      - -X main.version={{ .Version }}
     goos:
       - darwin
+    goarch:
+      - arm64
+  - id: linux
+    main: ./main.go
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X main.version={{ .Version }}
+    goos:
       - linux
     goarch:
-      - amd64
       - arm64
 
 archives:
-  - id: github release
-    replacements:
-      darwin: Darwin
-      linux: Linux
-      amd64: x86_64
+  - id: darwin
+    ids:
+      - darwin
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:
       - LICENSE
       - README.md
-      - _tfstore
+      - completions/_tfstore
+  - id: linux
+    ids:
+      - linux
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - completions/_tfstore
+
 checksum:
   name_template: 'checksums.txt'
+
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
+
 changelog:
   sort: asc
   filters:
@@ -37,18 +60,17 @@ changelog:
       - '^test:'
 
 brews:
-  -
-    tap:
+  - name: tfstore
+    repository:
       owner: youyo
       name: homebrew-tap
-    folder: Formula
-    commit_author:
-      name: goreleaserbot
-      email: goreleaser@carlosbecker.com
-    description: "Login to the AWS management console."
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    ids:
+      - darwin
     homepage: "https://github.com/youyo/tfstore"
+    description: "Create a Terraform remote-state backend (S3, native locking)."
     install: |
       bin.install "tfstore"
-      zsh_completion.install '_tfstore'
-    test: |
-      system "#{bin}/tfstore --version"
+      zsh_completion.install "completions/_tfstore"
