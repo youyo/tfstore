@@ -1,0 +1,4 @@
+title = "tfstore gitleaks config"
+
+[extend]
+useDefault = true
