@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Terraform remote-state backend: a single S3 bucket, versioned and
+  encrypted, with public access blocked. State locking relies on
+  Terraform's native S3 locking (use_lockfile=true) — no DynamoDB table.
+
+Parameters:
+  NoncurrentVersionExpirationInDays:
+    Type: Number
+    Default: 365
+    Description: >-
+      Number of days a noncurrent object version is kept before it expires.
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: !Ref NoncurrentVersionExpirationInDays
+
+Outputs:
+  BucketName:
+    Value: !Ref Bucket
