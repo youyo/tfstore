@@ -5,11 +5,26 @@ Description: >-
   Terraform's native S3 locking (use_lockfile=true) — no DynamoDB table.
 
 Parameters:
+  Name:
+    Type: String
+    Description: >-
+      Logical name used to derive the default bucket name
+      (tfstate-${Name}-${AWS::AccountId}-${AWS::Region}). Always supplied by
+      the caller.
+  BucketName:
+    Type: String
+    Default: ''
+    Description: >-
+      Explicit bucket name override. When empty, the bucket name defaults to
+      tfstate-${Name}-${AWS::AccountId}-${AWS::Region}.
   NoncurrentVersionExpirationInDays:
     Type: Number
     Default: 365
     Description: >-
       Number of days a noncurrent object version is kept before it expires.
+
+Conditions:
+  BucketNameProvided: !Not [!Equals [!Ref BucketName, '']]
 
 Resources:
   Bucket:
@@ -17,6 +32,10 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      BucketName: !If
+        - BucketNameProvided
+        - !Ref BucketName
+        - !Sub 'tfstate-${Name}-${AWS::AccountId}-${AWS::Region}'
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:

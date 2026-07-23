@@ -36,25 +36,27 @@ xattr -dr com.apple.quarantine ./tfstore
 
 ## Usage
 
+Run `tfstore <name>` with the required backend name:
+
 ```bash
-$ tfstore
+$ tfstore myproject
 Creating stack...
 
-bucket: tfstore-bucket-xxxxxxxxxxx
+bucket: tfstate-myproject-123456789012-ap-northeast-1
 region: ap-northeast-1
 key:    terraform.tfstate
 
 Terraform initialize command is
 
 terraform init \
-  -backend-config 'bucket=tfstore-bucket-xxxxxxxxxxx' \
+  -backend-config 'bucket=tfstate-myproject-123456789012-ap-northeast-1' \
   -backend-config 'key=terraform.tfstate' \
   -backend-config 'region=ap-northeast-1' \
   -backend-config 'encrypt=true' \
   -backend-config 'use_lockfile=true'
 
 $ terraform init \
-  -backend-config 'bucket=tfstore-bucket-xxxxxxxxxxx' \
+  -backend-config 'bucket=tfstate-myproject-123456789012-ap-northeast-1' \
   -backend-config 'key=terraform.tfstate' \
   -backend-config 'region=ap-northeast-1' \
   -backend-config 'encrypt=true' \
@@ -65,17 +67,23 @@ $ terraform init \
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--stack-name` | `-n` | `tfstore` | CloudFormation stack name |
+| `--stack-name` |  | `tfstore-<name>` | CloudFormation stack name |
+| `--bucket-name` |  | `tfstate-<name>-<account-id>-<region>` | S3 bucket name |
 | `--region` | `-r` | resolved from AWS configuration | AWS region |
 | `--key` | `-k` | `terraform.tfstate` | Terraform state object key |
 
 ```bash
-$ tfstore --stack-name custom-stack-name --region us-east-1 --key envs/prod/terraform.tfstate
+$ tfstore myproject --stack-name custom-stack-name --region us-east-1 --key envs/prod/terraform.tfstate
 ```
 
 If a stack with the given name already exists, `tfstore` exits with an
 error — it is a create-only tool and does not update or migrate an existing
 stack.
+
+The automatically generated bucket name is deterministic. Because its
+CloudFormation `DeletionPolicy` is `Retain`, deleting a stack leaves the
+bucket behind; recreating the same name in the same account and region can
+therefore collide. Use `--bucket-name` to choose a different name.
 
 ## IAM policy for Terraform
 

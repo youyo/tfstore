@@ -21,14 +21,14 @@ type fakeBackend struct {
 	createCalled     bool
 	waitCalled       bool
 	outputsCalled    bool
-	createStackName  string
+	createInput      backend.CreateInput
 	waitStackName    string
 	outputsStackName string
 }
 
-func (f *fakeBackend) Create(_ context.Context, stackName string) error {
+func (f *fakeBackend) Create(_ context.Context, in backend.CreateInput) error {
 	f.createCalled = true
-	f.createStackName = stackName
+	f.createInput = in
 	return f.createErr
 }
 
@@ -45,6 +45,16 @@ func (f *fakeBackend) GetOutputs(_ context.Context, stackName string) (string, e
 		return "", f.outputsErr
 	}
 	return f.outputsBkt, nil
+}
+
+// countingNewBackend wraps a stub factory and counts how many times it was
+// invoked, so tests can assert validation happens before any AWS call.
+func countingNewBackend(b backendAPI, region string, err error) (*int, func(context.Context) (backendAPI, string, error)) {
+	calls := 0
+	return &calls, func(context.Context) (backendAPI, string, error) {
+		calls++
+		return b, region, err
+	}
 }
 
 // stubNewBackend replaces the package-level newBackend factory for the
@@ -65,7 +75,8 @@ func TestFlagDefaults(t *testing.T) {
 		name string
 		want string
 	}{
-		{"stack-name", "tfstore"},
+		{"stack-name", ""},
+		{"bucket-name", ""},
 		{"region", ""},
 		{"key", "terraform.tfstate"},
 	}
@@ -84,7 +95,7 @@ func TestFlagDefaults(t *testing.T) {
 func TestFlagShorthands(t *testing.T) {
 	cmd := newRootCmd()
 
-	shorthands := map[string]string{"n": "stack-name", "r": "region", "k": "key"}
+	shorthands := map[string]string{"r": "region", "k": "key"}
 	for short, long := range shorthands {
 		f := cmd.Flags().ShorthandLookup(short)
 		if f == nil {
@@ -93,6 +104,17 @@ func TestFlagShorthands(t *testing.T) {
 		if f.Name != long {
 			t.Errorf("-%s maps to %q, want %q", short, f.Name, long)
 		}
+	}
+
+	if f := cmd.Flags().ShorthandLookup("n"); f != nil {
+		t.Errorf("shorthand -n must be removed, but maps to %q", f.Name)
+	}
+
+	if f := cmd.Flags().Lookup("stack-name"); f != nil && f.Shorthand != "" {
+		t.Errorf("--stack-name must be long-only, got shorthand %q", f.Shorthand)
+	}
+	if f := cmd.Flags().Lookup("bucket-name"); f != nil && f.Shorthand != "" {
+		t.Errorf("--bucket-name must be long-only, got shorthand %q", f.Shorthand)
 	}
 }
 
@@ -108,6 +130,238 @@ func TestUsage_NoDynamoDBMentionOrTypo(t *testing.T) {
 	}
 }
 
+func TestRequiresNameArg(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("Execute() error = nil, want an error when no positional name is given")
+	}
+}
+
+func TestStackNameDefault(t *testing.T) {
+	fb := &fakeBackend{outputsBkt: "my-bucket"}
+	stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := backend.CreateInput{StackName: "tfstore-foo", Name: "foo", BucketName: ""}
+	if fb.createInput != want {
+		t.Errorf("Create called with %+v, want %+v", fb.createInput, want)
+	}
+	if fb.waitStackName != "tfstore-foo" {
+		t.Errorf("WaitForCreation stackName = %q, want %q", fb.waitStackName, "tfstore-foo")
+	}
+}
+
+func TestStackNameOverride(t *testing.T) {
+	fb := &fakeBackend{outputsBkt: "my-bucket"}
+	stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo", "--stack-name", "bar"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := backend.CreateInput{StackName: "bar", Name: "foo", BucketName: ""}
+	if fb.createInput != want {
+		t.Errorf("Create called with %+v, want %+v", fb.createInput, want)
+	}
+}
+
+func TestBucketNameOverride(t *testing.T) {
+	fb := &fakeBackend{outputsBkt: "my-bucket"}
+	stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo", "--bucket-name", "my-bkt"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := backend.CreateInput{StackName: "tfstore-foo", Name: "foo", BucketName: "my-bkt"}
+	if fb.createInput != want {
+		t.Errorf("Create called with %+v, want %+v", fb.createInput, want)
+	}
+}
+
+func TestBothOverridesKeepName(t *testing.T) {
+	fb := &fakeBackend{outputsBkt: "my-bucket"}
+	stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo", "--stack-name", "bar", "--bucket-name", "baz"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	want := backend.CreateInput{StackName: "bar", Name: "foo", BucketName: "baz"}
+	if fb.createInput != want {
+		t.Errorf("Create called with %+v, want %+v", fb.createInput, want)
+	}
+}
+
+func TestNameValidationRejectsInvalid(t *testing.T) {
+	invalidNames := []string{
+		"Foo",                   // uppercase
+		"foo_bar",               // underscore
+		strings.Repeat("a", 27), // >26 chars
+	}
+
+	for _, name := range invalidNames {
+		fb := &fakeBackend{outputsBkt: "my-bucket"}
+		stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{name})
+
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("Execute() with name %q: error = nil, want an error", name)
+		}
+		if fb.createCalled {
+			t.Errorf("Create must not be called for invalid name %q", name)
+		}
+	}
+}
+
+func TestBucketNameValidationRejectsInvalid(t *testing.T) {
+	invalidBucketNames := []string{
+		"My-Bucket", // uppercase
+		"has_underscore",
+		"ab",                    // too short
+		strings.Repeat("a", 64), // too long
+	}
+
+	for _, bkt := range invalidBucketNames {
+		fb := &fakeBackend{outputsBkt: "my-bucket"}
+		stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"foo", "--bucket-name", bkt})
+
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("Execute() with bucket-name %q: error = nil, want an error", bkt)
+		}
+		if fb.createCalled {
+			t.Errorf("Create must not be called for invalid bucket-name %q", bkt)
+		}
+	}
+}
+
+func TestNameBoundary(t *testing.T) {
+	fb := &fakeBackend{outputsBkt: "my-bucket"}
+	stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{strings.Repeat("a", 26)})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() with 26-char name: error = %v, want nil", err)
+	}
+	if !fb.createCalled {
+		t.Error("Create must be called for a 26-char name")
+	}
+}
+
+func TestNameBoundary_TooLong(t *testing.T) {
+	fb := &fakeBackend{outputsBkt: "my-bucket"}
+	stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{strings.Repeat("a", 27)})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("Execute() with 27-char name: error = nil, want an error")
+	}
+	if fb.createCalled {
+		t.Error("Create must not be called for a 27-char name")
+	}
+}
+
+func TestBucketNameBoundary(t *testing.T) {
+	for _, n := range []int{3, 63} {
+		fb := &fakeBackend{outputsBkt: "my-bucket"}
+		stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"foo", "--bucket-name", strings.Repeat("a", n)})
+
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("Execute() with %d-char bucket-name: error = %v, want nil", n, err)
+		}
+		if !fb.createCalled {
+			t.Errorf("Create must be called for a %d-char bucket-name", n)
+		}
+	}
+}
+
+func TestBucketNameBoundary_OutOfRange(t *testing.T) {
+	for _, n := range []int{2, 64} {
+		fb := &fakeBackend{outputsBkt: "my-bucket"}
+		stubNewBackend(t, fb, "ap-northeast-1", nil)
+
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"foo", "--bucket-name", strings.Repeat("a", n)})
+
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("Execute() with %d-char bucket-name: error = nil, want an error", n)
+		}
+		if fb.createCalled {
+			t.Errorf("Create must not be called for a %d-char bucket-name", n)
+		}
+	}
+}
+
+func TestValidationBeforeAWS(t *testing.T) {
+	calls, factory := countingNewBackend(&fakeBackend{outputsBkt: "my-bucket"}, "ap-northeast-1", nil)
+	original := newBackend
+	newBackend = factory
+	t.Cleanup(func() { newBackend = original })
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"Invalid_Name"})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("Execute() error = nil, want an error for invalid name")
+	}
+	if *calls != 0 {
+		t.Errorf("newBackend called %d times, want 0 (validation must run before any AWS call)", *calls)
+	}
+}
+
 func TestExecute_Success(t *testing.T) {
 	fb := &fakeBackend{outputsBkt: "my-bucket"}
 	stubNewBackend(t, fb, "ap-northeast-1", nil)
@@ -116,14 +370,14 @@ func TestExecute_Success(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(out)
-	cmd.SetArgs([]string{"--stack-name", "my-stack", "--key", "state.tfstate"})
+	cmd.SetArgs([]string{"foo", "--stack-name", "my-stack", "--key", "state.tfstate"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
 	}
 
-	if !fb.createCalled || fb.createStackName != "my-stack" {
-		t.Errorf("Create called=%v stackName=%q, want called with %q", fb.createCalled, fb.createStackName, "my-stack")
+	if !fb.createCalled || fb.createInput.StackName != "my-stack" {
+		t.Errorf("Create called=%v stackName=%q, want called with %q", fb.createCalled, fb.createInput.StackName, "my-stack")
 	}
 	if !fb.waitCalled || fb.waitStackName != "my-stack" {
 		t.Errorf("WaitForCreation called=%v stackName=%q, want called with %q", fb.waitCalled, fb.waitStackName, "my-stack")
@@ -146,7 +400,7 @@ func TestExecute_RegionFlagOverridesResolvedRegion(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(out)
-	cmd.SetArgs([]string{"--region", "eu-west-1"})
+	cmd.SetArgs([]string{"foo", "--region", "eu-west-1"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
@@ -166,7 +420,7 @@ func TestExecute_UsesResolvedRegionWhenFlagEmpty(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(out)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"foo"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v, want nil", err)
@@ -185,6 +439,7 @@ func TestExecute_PropagatesNewBackendError(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo"})
 
 	err := cmd.Execute()
 	if !errors.Is(err, wantErr) {
@@ -200,6 +455,7 @@ func TestExecute_PropagatesCreateError(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo"})
 
 	err := cmd.Execute()
 	if !errors.Is(err, wantErr) {
@@ -218,6 +474,7 @@ func TestExecute_PropagatesWaitForCreationError(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo"})
 
 	err := cmd.Execute()
 	if !errors.Is(err, wantErr) {
@@ -236,6 +493,7 @@ func TestExecute_PropagatesGetOutputsError(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"foo"})
 
 	err := cmd.Execute()
 	if !errors.Is(err, wantErr) {

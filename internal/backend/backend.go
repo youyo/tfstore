@@ -53,30 +53,60 @@ func New(ctx context.Context) (*Backend, error) {
 	}, nil
 }
 
+// nameParameterKey and bucketNameParameterKey are the CloudFormation
+// Parameter names declared by internal/cfn.Template (the S1 contract).
+const (
+	nameParameterKey       = "Name"
+	bucketNameParameterKey = "BucketName"
+)
+
+// CreateInput carries the values Create passes through to CloudFormation.
+//
+// Input validation (charset/length rules for Name and BucketName) is not
+// Backend's responsibility: cmd validates both before constructing a
+// Backend at all, so Create only enforces the pre-existing empty-StackName
+// guard.
+type CreateInput struct {
+	// StackName is the CloudFormation stack name (a CreateStack API
+	// argument; it never reaches the template).
+	StackName string
+	// Name is passed as the template's "Name" Parameter. It has no default
+	// in the template, so it must always be supplied.
+	Name string
+	// BucketName is passed as the template's "BucketName" Parameter. An
+	// empty value lets the template fall back to its deterministic default
+	// derived from Name/account-id/region.
+	BucketName string
+}
+
 // Create starts creation of the Terraform remote-state stack from the
 // embedded CloudFormation template (internal/cfn.Template, the S1-foundation
 // contract). It does not wait for the stack to finish creating; call
 // WaitForCreation for that. No Capabilities are requested because the
 // template declares no IAM resources.
 //
-// If a stack named stackName already exists, Create returns an error
+// If a stack named in.StackName already exists, Create returns an error
 // wrapping the underlying AlreadyExistsException. tfstore is a create-only
 // tool: it does not support updating or migrating an existing stack.
-func (b *Backend) Create(ctx context.Context, stackName string) error {
-	if stackName == "" {
+func (b *Backend) Create(ctx context.Context, in CreateInput) error {
+	if in.StackName == "" {
 		return errors.New("backend: stack name must not be empty")
 	}
 
 	_, err := b.Client.CreateStack(ctx, &cloudformation.CreateStackInput{
-		StackName:    aws.String(stackName),
+		StackName:    aws.String(in.StackName),
 		TemplateBody: aws.String(cfn.Template),
+		Parameters: []types.Parameter{
+			{ParameterKey: aws.String(nameParameterKey), ParameterValue: aws.String(in.Name)},
+			{ParameterKey: aws.String(bucketNameParameterKey), ParameterValue: aws.String(in.BucketName)},
+		},
 	})
 	if err != nil {
 		var alreadyExists *types.AlreadyExistsException
 		if errors.As(err, &alreadyExists) {
-			return fmt.Errorf("backend: stack %q already exists; tfstore does not update or migrate existing stacks: %w", stackName, err)
+			return fmt.Errorf("backend: stack %q already exists; tfstore does not update or migrate existing stacks: %w", in.StackName, err)
 		}
-		return fmt.Errorf("backend: failed to create stack %q: %w", stackName, err)
+		return fmt.Errorf("backend: failed to create stack %q: %w", in.StackName, err)
 	}
 	return nil
 }

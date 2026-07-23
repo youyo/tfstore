@@ -40,3 +40,52 @@ func TestTemplate_DoesNotUseTransform(t *testing.T) {
 		t.Error("Template declares a Transform section, which is not expected")
 	}
 }
+
+func TestTemplate_DefaultsBucketNameFromNameAccountRegion(t *testing.T) {
+	if !strings.Contains(Template, "tfstate-${Name}-${AWS::AccountId}-${AWS::Region}") {
+		t.Error("Template does not build the default bucket name from Name/AWS::AccountId/AWS::Region")
+	}
+}
+
+func TestTemplate_HasBucketNameOverrideCondition(t *testing.T) {
+	if !strings.Contains(Template, "Conditions:") {
+		t.Error("Template does not declare a Conditions section")
+	}
+	if !strings.Contains(Template, "BucketNameProvided") {
+		t.Error("Template does not declare a BucketNameProvided condition")
+	}
+}
+
+func TestTemplate_ParameterShape(t *testing.T) {
+	nameBlockStart := strings.Index(Template, "\n  Name:")
+	if nameBlockStart == -1 {
+		t.Fatal("Template does not declare a Name parameter")
+	}
+	bucketNameBlockStart := strings.Index(Template, "\n  BucketName:")
+	if bucketNameBlockStart == -1 {
+		t.Fatal("Template does not declare a BucketName parameter")
+	}
+
+	// The Name parameter block runs from its header to the next
+	// top-level parameter (BucketName) — it must not contain a Default
+	// line, since Name is always supplied by the caller.
+	nameBlockEnd := bucketNameBlockStart
+	if bucketNameBlockStart < nameBlockStart {
+		nameBlockEnd = len(Template)
+	}
+	nameBlock := Template[nameBlockStart:nameBlockEnd]
+	if strings.Contains(nameBlock, "Default") {
+		t.Error("Name parameter block must not declare a Default")
+	}
+
+	if !strings.Contains(Template, "BucketName:\n    Type: String\n    Default: ''") {
+		t.Error("BucketName parameter must be Type: String with Default: ''")
+	}
+
+	if !strings.Contains(Template, "Fn::If") && !strings.Contains(Template, "!If") {
+		t.Error("Template does not resolve BucketName via Fn::If/!If")
+	}
+	if !strings.Contains(Template, "BucketNameProvided") {
+		t.Error("BucketName resolution does not reference the BucketNameProvided condition")
+	}
+}

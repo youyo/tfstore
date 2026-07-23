@@ -37,21 +37,60 @@ func TestCreate_PassesTemplateAndStackNameWithoutCapabilities(t *testing.T) {
 		},
 	}}
 
-	if err := b.Create(context.Background(), "my-stack"); err != nil {
+	in := CreateInput{StackName: "my-stack", Name: "foo", BucketName: ""}
+	if err := b.Create(context.Background(), in); err != nil {
 		t.Fatalf("Create() error = %v, want nil", err)
 	}
 
 	if gotInput == nil {
 		t.Fatal("CreateStack was not called")
 	}
-	if got := aws.ToString(gotInput.StackName); got != "my-stack" {
-		t.Errorf("StackName = %q, want %q", got, "my-stack")
+	if got := aws.ToString(gotInput.StackName); got != in.StackName {
+		t.Errorf("StackName = %q, want %q", got, in.StackName)
 	}
 	if got := aws.ToString(gotInput.TemplateBody); got != cfn.Template {
 		t.Errorf("TemplateBody = %q, want internal/cfn.Template", got)
 	}
 	if len(gotInput.Capabilities) != 0 {
 		t.Errorf("Capabilities = %v, want none", gotInput.Capabilities)
+	}
+
+	wantParams := map[string]string{"Name": in.Name, "BucketName": in.BucketName}
+	gotParams := map[string]string{}
+	for _, p := range gotInput.Parameters {
+		gotParams[aws.ToString(p.ParameterKey)] = aws.ToString(p.ParameterValue)
+	}
+	if gotParams["Name"] != wantParams["Name"] {
+		t.Errorf("Parameters[Name] = %q, want %q", gotParams["Name"], wantParams["Name"])
+	}
+	if gotParams["BucketName"] != wantParams["BucketName"] {
+		t.Errorf("Parameters[BucketName] = %q, want %q", gotParams["BucketName"], wantParams["BucketName"])
+	}
+}
+
+func TestCreate_PassesNonEmptyBucketNameOverride(t *testing.T) {
+	var gotInput *cloudformation.CreateStackInput
+	b := &Backend{Client: &fakeCFNAPI{
+		createStackFn: func(_ context.Context, params *cloudformation.CreateStackInput, _ ...func(*cloudformation.Options)) (*cloudformation.CreateStackOutput, error) {
+			gotInput = params
+			return &cloudformation.CreateStackOutput{StackId: aws.String("stack-id")}, nil
+		},
+	}}
+
+	in := CreateInput{StackName: "my-stack", Name: "foo", BucketName: "my-explicit-bucket"}
+	if err := b.Create(context.Background(), in); err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	gotParams := map[string]string{}
+	for _, p := range gotInput.Parameters {
+		gotParams[aws.ToString(p.ParameterKey)] = aws.ToString(p.ParameterValue)
+	}
+	if gotParams["Name"] != in.Name {
+		t.Errorf("Parameters[Name] = %q, want %q", gotParams["Name"], in.Name)
+	}
+	if gotParams["BucketName"] != in.BucketName {
+		t.Errorf("Parameters[BucketName] = %q, want %q", gotParams["BucketName"], in.BucketName)
 	}
 }
 
@@ -63,7 +102,7 @@ func TestCreate_RejectsEmptyStackName(t *testing.T) {
 		},
 	}}
 
-	if err := b.Create(context.Background(), ""); err == nil {
+	if err := b.Create(context.Background(), CreateInput{StackName: "", Name: "foo"}); err == nil {
 		t.Fatal("Create() error = nil, want error for empty stack name")
 	}
 }
@@ -75,7 +114,7 @@ func TestCreate_AlreadyExists(t *testing.T) {
 		},
 	}}
 
-	err := b.Create(context.Background(), "my-stack")
+	err := b.Create(context.Background(), CreateInput{StackName: "my-stack", Name: "foo"})
 	if err == nil {
 		t.Fatal("Create() error = nil, want an AlreadyExists error")
 	}
@@ -94,7 +133,7 @@ func TestCreate_WrapsOtherErrors(t *testing.T) {
 		},
 	}}
 
-	err := b.Create(context.Background(), "my-stack")
+	err := b.Create(context.Background(), CreateInput{StackName: "my-stack", Name: "foo"})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Create() error = %v, want it to wrap %v", err, wantErr)
 	}
