@@ -24,7 +24,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Setup Takumi Guard (Go)
-        uses: flatt-security/setup-takumi-guard-golang@2e3c7c40b538cd68b2ac483def12982ebc8bc02e # v1
+        uses: flatt-security/setup-takumi-guard-golang@37631ecffa6faf06754444a4807451b7a55c64b5 # v1
 
       - name: Generate GitHub App token for homebrew-tap
         id: app-token
